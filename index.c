@@ -24,9 +24,6 @@
 #include <unistd.h>
 #include <dirent.h>
 
-
-int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
-
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
 // Find an index entry by path (linear scan).
@@ -152,7 +149,8 @@ int index_load(Index *index) {
         char hex[HASH_HEX_SIZE + 1];
 
         if (fscanf(f, "%o %64s %lu %u %s\n",
-                   &e->mode, hex,
+                   &e->mode,
+                   hex,
                    &e->mtime_sec,
                    &e->size,
                    e->path) != 5) break;
@@ -216,16 +214,10 @@ int index_save(const Index *index) {
 // Returns 0 on success, -1 on error.
 int index_add(Index *index, const char *path) {
     struct stat st;
-    if (stat(path, &st) != 0) {
-        perror("stat");
-        return -1;
-    }
+    if (stat(path, &st) != 0) return -1;
 
     FILE *f = fopen(path, "rb");
-    if (!f) {
-        perror("fopen");
-        return -1;
-    }
+    if (!f) return -1;
 
     void *data = malloc(st.st_size);
     if (!data) {
@@ -251,7 +243,7 @@ int index_add(Index *index, const char *path) {
         e = &index->entries[index->count++];
     }
 
-    e->mode = 0100644;  // FIX: don’t use raw st_mode
+    e->mode = 0100644;  // Git-style mode
     e->hash = hash;
     e->mtime_sec = st.st_mtime;
     e->size = st.st_size;

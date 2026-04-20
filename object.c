@@ -93,89 +93,6 @@ int object_exists(const ObjectID *id) {
 
 //
 // Returns 0 on success, -1 on error.
-
-
-// Read an object from the store.
-//
-// Steps:
-//   1. Build the file path from the hash using object_path()
-//   2. Open and read the entire file
-//   3. Parse the header to extract the type string and size
-//   4. Verify integrity: recompute the SHA-256 of the file contents
-//      and compare to the expected hash (from *id). Return -1 if mismatch.
-//   5. Set *type_out to the parsed ObjectType
-//   6. Allocate a buffer, copy the data portion (after the \0), set *data_out and *len_out
-//
-// HINTS - Useful syscalls and functions for this phase:
-//   - object_path        : getting the target file path
-//   - fopen, fread, fseek: reading the file into memory
-//   - memchr             : safely finding the '\0' separating header and data
-//   - strncmp            : parsing the type string ("blob", "tree", "commit")
-//   - compute_hash       : re-hashing the read data for integrity verification
-//   - memcmp             : comparing the computed hash against the requested hash
-//   - malloc, memcpy     : allocating and returning the extracted data
-//
-// The caller is responsible for calling free(*data_out).
-// Returns 0 on success, -1 on error (file not found, corrupt, etc.).
-int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
-    char path[512];
-    object_path(id, path, sizeof(path));
-
-    FILE *f = fopen(path, "rb");
-    if (!f) return -1;
-
-    fseek(f, 0, SEEK_END);
-    size_t file_size = ftell(f);
-    rewind(f);
-
-    void *buffer = malloc(file_size);
-    if (!buffer) {
-        fclose(f);
-        return -1;
-    }
-
-    fread(buffer, 1, file_size, f);
-    fclose(f);
-
-    // Verify hash
-    ObjectID computed;
-    compute_hash(buffer, file_size, &computed);
-    if (memcmp(computed.hash, id->hash, HASH_SIZE) != 0) {
-        free(buffer);
-        return -1;
-    }
-
-    // Parse header
-    char *header_end = memchr(buffer, '\0', file_size);
-    if (!header_end) {
-        free(buffer);
-        return -1;
-    }
-
-    char type_str[10];
-    size_t size;
-
-    sscanf(buffer, "%s %zu", type_str, &size);
-
-    if (strcmp(type_str, "blob") == 0) *type_out = OBJ_BLOB;
-    else if (strcmp(type_str, "tree") == 0) *type_out = OBJ_TREE;
-    else *type_out = OBJ_COMMIT;
-
-    size_t header_len = (header_end - (char *)buffer) + 1;
-
-    *data_out = malloc(size);
-    if (!*data_out) {
-        free(buffer);
-        return -1;
-    }
-
-    memcpy(*data_out, (char *)buffer + header_len, size);
-    *len_out = size;
-
-    free(buffer);
-    return 0;
-}
-
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
     char header[64];
     const char *type_str;
@@ -228,5 +145,67 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 
     *id_out = id;
     free(full_data);
+    return 0;
+}
+
+// Read an object from the store.
+//
+// Steps:
+//   1. Build the file path from the hash using object_path()
+//   2. Open and read the entire file
+//   3. Parse the header to extract the type string and size
+//   4. Verify integrity: recompute the SHA-256 of the file contents
+//      and compare to the expected hash (from *id). Return -1 if mismatch.
+//   5. Set *type_out to the parsed ObjectType
+//   6. Allocate a buffer, copy the data portion (after the \0), set *data_out and *len_out
+//
+// HINTS - Useful syscalls and functions for this phase:
+//   - object_path        : getting the target file path
+//   - fopen, fread, fseek: reading the file into memory
+//   - memchr             : safely finding the '\0' separating header and data
+//   - strncmp            : parsing the type string ("blob", "tree", "commit")
+//   - compute_hash       : re-hashing the read data for integrity verification
+//   - memcmp             : comparing the computed hash against the requested hash
+//   - malloc, memcpy     : allocating and returning the extracted data
+//
+// The caller is responsible for calling free(*data_out).
+// Returns 0 on success, -1 on error (file not found, corrupt, etc.).
+int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
+    char path[512];
+    object_path(id, path, sizeof(path));
+
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    rewind(f);
+
+    void *buffer = malloc(size);
+    fread(buffer, 1, size, f);
+    fclose(f);
+
+    ObjectID check;
+    compute_hash(buffer, size, &check);
+    if (memcmp(check.hash, id->hash, HASH_SIZE) != 0) {
+        free(buffer);
+        return -1;
+    }
+
+    char *null_pos = memchr(buffer, '\0', size);
+
+    char type_str[10];
+    sscanf(buffer, "%s %zu", type_str, len_out);
+
+    if (strcmp(type_str, "blob") == 0) *type_out = OBJ_BLOB;
+    else if (strcmp(type_str, "tree") == 0) *type_out = OBJ_TREE;
+    else *type_out = OBJ_COMMIT;
+
+    size_t header_len = (null_pos - (char *)buffer) + 1;
+
+    *data_out = malloc(*len_out);
+    memcpy(*data_out, (char *)buffer + header_len, *len_out);
+
+    free(buffer);
     return 0;
 }
